@@ -131,7 +131,7 @@ object SubGraph {
 
                 println("vertices count:")
 
-                println(iterator_edgeTriplet.count() * 2 - 1)
+                println(iterator_edgeTriplet.size * 2 - 1)
 
                 println("edges:")
                 for (i <- iterator_edgeTriplet) {
