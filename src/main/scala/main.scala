@@ -135,7 +135,7 @@ object SubGraph {
                 if (iterator_edgeTriplet.size == 1)
                     vertices_num = 2;
                 else
-                    iterator_edgeTriplet.size * 2 - 1;
+                    vertices_num = iterator_edgeTriplet.size * 2 - 1;
 
                 println(vertices_num)
 
