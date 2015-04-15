@@ -131,7 +131,13 @@ object SubGraph {
 
                 println("vertices count:")
 
-                println(iterator_edgeTriplet.size * 2 - 1)
+                var vertices_num = 0;
+                if (iterator_edgeTriplet.size == 1)
+                    vertices_num = 2;
+                else
+                    iterator_edgeTriplet.size * 2 - 1;
+
+                println(vertices_num)
 
                 println("edges:")
                 for (i <- iterator_edgeTriplet) {
