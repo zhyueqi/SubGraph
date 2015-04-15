@@ -93,7 +93,7 @@ object SubGraph {
 
         val edge_tripl = sc.textFile(joined_file_file).map { x =>
             val arr = x.split(",").map(e => e.trim)
-            (arr(1), arr(3))
+            (arr(1), arr(3), x(5).toLong)
         }
 
         val empty_removed = edge_tripl.filter(x => x._1 != "0" && x._2 != "0")
@@ -102,8 +102,8 @@ object SubGraph {
         println("edges count : " + empty_removed.count())
 
         val edges = empty_removed.map {
-            case (src, dst) =>
-                Edge(src.toLong, dst.toLong, 1L)
+            case (src, dst, w) =>
+                Edge(src.toLong, dst.toLong, w)
         }
 
         val g = Graph.fromEdges(edges, "defaultProperty")
@@ -112,18 +112,53 @@ object SubGraph {
 
         val labled_components = ConnectedComponents.run(g)
 
-        val group_vertices = labled_components.vertices.groupBy {
-            case (vid, attr) => attr
+        extractEachComponentByVertice(labled_components)
+
+    }
+
+    def extractEachComponentByVertice(labled_components: Graph[Long, Long]) {
+        def sendMsg(ctx: EdgeContext[Long, Long, Long]) = {
+            ctx.sendToDst(ctx.attr)
+            ctx.sendToSrc(ctx.attr)
         }
 
-        // group_vertices.foreach{
+        //count each vertices's weight
+        val vertices_weight: RDD[(VertexId, Long)] = labled_components.aggregateMessages[Long](sendMsg, _ + _)
+        val vertices_merge = labled_components.vertices.leftOuterJoin(vertices_weight).map {
+            case (id, (label, vw)) =>
+                (label, (id, vw.getOrElse(0L)))
+        }
 
-        // }
+        val group_vertices = vertices_merge.groupByKey()
 
+        //labled_components.persist()
+
+        val group_edges = labled_components.triplets.map(x => (x.srcAttr, x.attr))
+
+        val component_weight = group_edges.reduceByKey((a, b) => (a + b))
+
+        val result = component_weight.leftOuterJoin(group_vertices).map {
+            case (label, (cw, vw)) =>
+                (label, (cw, vw.getOrElse(Iterator.empty)))
+        }
+
+        result.foreach {
+            case (label, (weight, iterator_vertice)) =>
+                println("图标签:" + label)
+                println("总发帖数:" + weight)
+                println("vertices:")
+                println("-- 图节点数 :" + iterator_vertice.size)
+                for (v <- iterator_vertice) {
+                    println("节点：" + v._1 + "---" + v._2)
+                }
+
+        }
+    }
+
+    def extractEachComponentByEdges(labled_components: Graph[Long, Long]) {
         val groups = labled_components.triplets.groupBy {
             case (edgeTriplet) => edgeTriplet.srcAttr
         }
-
         //print each group
         groups.foreach {
             case (key, iterator_edgeTriplet) =>
@@ -146,7 +181,6 @@ object SubGraph {
                 println("")
 
         }
-
     }
 
     /**
