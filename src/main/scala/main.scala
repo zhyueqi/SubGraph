@@ -2,7 +2,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.apache.spark.SparkConf
 import org.apache.spark.rdd.RDD
-import java.io.StringWriter
+import java.io.File
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
 import org.apache.spark.graphx.impl.{ EdgePartitionBuilder, GraphImpl }
@@ -11,15 +11,17 @@ import org.apache.spark.graphx._
 
 object SubGraph {
     def main(args: Array[String]) {
+
         val conf = new SparkConf().setAppName("Simple Application")
         val sc = new SparkContext(conf)
 
         //去除重复项数据
-        // remove_repeating_vertice(sc);
+        //remove_repeating_vertice(sc);
         // remove_repeating_edges(sc);
 
         //补充 id
         //joinTable(sc);
+        //无向图子图
         connectedComponents(sc);
     }
 
@@ -108,15 +110,44 @@ object SubGraph {
 
         val g = Graph.fromEdges(edges, "defaultProperty")
 
-        println("vertices count : " + g.vertices.count())
-
         val labled_components = ConnectedComponents.run(g)
 
-        extractEachComponentByVertice(labled_components)
+        val result = extractEachComponentByVertice(labled_components)
+
+        val file = "file:///Users/zhyueqi/WorkSpace/spark/data/final"
+        //FileUtil.fullyDelete(new File(file))
+
+        def countNum(len: Long): Long = {
+            if (len == 1)
+                2
+            else
+                len * 2 - 1
+        }
+
+        val sorted = result.sortBy {
+            x =>
+                countNum(x._2._2.size)
+
+        }
+        val arrayMap = sorted.map {
+            case (label, (cw, vw)) =>
+                val arr = Array.fill[String](3 + vw.size)("")
+                arr(0) = label.toString
+                arr(1) = cw.toString
+                arr(2) = countNum(vw.size).toString
+                var i = 3
+                for (v <- vw) {
+                    arr(i) = v.toString
+                    i += 1
+                }
+                arr.mkString(",")
+        }
+        arrayMap.saveAsTextFile(file)
+        merge(file, file + ".csv")
 
     }
 
-    def extractEachComponentByVertice(labled_components: Graph[Long, Long]) {
+    def extractEachComponentByVertice(labled_components: Graph[Long, Long]) = {
         def sendMsg(ctx: EdgeContext[Long, Long, Long]) = {
             ctx.sendToDst(ctx.attr)
             ctx.sendToSrc(ctx.attr)
@@ -142,17 +173,7 @@ object SubGraph {
                 (label, (cw, vw.getOrElse(Iterator.empty)))
         }
 
-        result.foreach {
-            case (label, (weight, iterator_vertice)) =>
-                println("图标签:" + label)
-                println("总发帖数:" + weight)
-                println("vertices:")
-                println("-- 图节点数 :" + iterator_vertice.size)
-                for (v <- iterator_vertice) {
-                    println("节点：" + v._1 + "---" + v._2)
-                }
-
-        }
+        result
     }
 
     def extractEachComponentByEdges(labled_components: Graph[Long, Long]) {
