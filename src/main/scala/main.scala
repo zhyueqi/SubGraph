@@ -8,56 +8,88 @@ import org.apache.hadoop.fs._
 import org.apache.spark.graphx.impl.{ EdgePartitionBuilder, GraphImpl }
 import org.apache.spark.graphx.lib.ConnectedComponents
 import org.apache.spark.graphx._
+import com.typesafe.config._
+import simplelib._
 
 object SubGraph {
+
+    // Load our own config values from the default location, application.conf
+    val conf = ConfigFactory.load()
+
+    val context = new SimpleLibContext()
+
     def main(args: Array[String]) {
 
         val conf = new SparkConf().setAppName("Simple Application")
         val sc = new SparkContext(conf)
 
+        if (args.length < 1) {
+            println("【参数一】运行程序编号，【参数...】");
+            return
+        }
+
+        def task(x: String) = x match {
+            case "1" => {
+                if (args.length >= 3) {
+                    remove_repeating_vertice(sc, args(1), args(2))
+                }
+            }
+            case "2" => {
+                if (args.length >= 3) {
+                    remove_repeating_edges(sc, args(1), args(2))
+                }
+            }
+            case "3" => {
+                if (args.length >= 4) {
+                    joinTable(sc, args(1), args(2), args(3))
+                }
+            }
+            case "4" => {
+                if (args.length >= 3) {
+                    connectedComponents(sc, args(1), args(2))
+                }
+            }
+            case _ => {
+                println("【1】：清理节点；【2】：清理边；【3】：补充Id；【4】：求子图 （填入【】中数字）")
+            }
+        }
+
+        task(args(0));
+
         //去除重复项数据
-        //remove_repeating_vertice(sc);
-        // remove_repeating_edges(sc);
+        //remove_repeating_vertice(sc,pathOfSrc,pathOfDst);
+        // remove_repeating_edges(sc,pathOfSrc,pathOfDst);
 
         //补充 id
-        //joinTable(sc);
+        //joinTable(sc,pathOfSrc,pathOfDst);
         //无向图子图
-        connectedComponents(sc);
+        //connectedComponents(sc,pathOfSrc,pathOfDst);
     }
 
-    def remove_repeating_vertice(sc: SparkContext) {
-        val inputFile = "file:///Users/zhyueqi/WorkSpace/spark/data/post_test.csv"
-        val outputFolder = "file:///Users/zhyueqi/WorkSpace/spark/data/primary_post_test"
-        val outputFile = "file:///Users/zhyueqi/WorkSpace/spark/data/single_post_test.csv"
-        val lines = sc.textFile(inputFile)
+    def remove_repeating_vertice(sc: SparkContext, src: String, dst: String) {
+
+        val lines = sc.textFile(src)
         val lineTrips = lines.map(line => line.split(",").map(elem => elem.trim))
         // lineTrips.persist()
         val combined = combine_a(lineTrips);
         println(combined.count());
-        writeToFile(combined, outputFolder);
-        merge(outputFolder, outputFile)
+        writeToFile(combined, dst);
+        merge(dst, dst + ".csv")
     }
 
-    def remove_repeating_edges(sc: SparkContext) {
-        val inputFile = "file:///Users/zhyueqi/WorkSpace/spark/data/reRelation_test.csv"
-        val outputFolder = "file:///Users/zhyueqi/WorkSpace/spark/data/primary_reRelation_test"
-        val outputFile = "file:///Users/zhyueqi/WorkSpace/spark/data/single_reRelation_test.csv"
-        val lines = sc.textFile(inputFile)
+    def remove_repeating_edges(sc: SparkContext, src: String, dst: String) {
+        val lines = sc.textFile(src)
         val lineTrips = lines.map(line => line.split(",").map(elem => elem.trim))
         // lineTrips.persist()
         val combined = combine_b(lineTrips);
         println(combined.count());
-        writeToFile(combined, outputFolder);
-        merge(outputFolder, outputFile)
+        writeToFile(combined, dst);
+        merge(dst, dst + ".csv")
     }
 
-    def joinTable(sc: SparkContext) {
-        val post_file = "file:///Users/zhyueqi/WorkSpace/spark/data/single_post_test.csv"
-        val relation_file = "file:///Users/zhyueqi/WorkSpace/spark/data/single_reRelation_test.csv"
-        val joined_file_folder = "file:///Users/zhyueqi/WorkSpace/spark/data/recover"
-        val joined_file_file = "file:///Users/zhyueqi/WorkSpace/spark/data/recover.csv"
-        val lines_post = sc.textFile(post_file)
-        val lines_relation = sc.textFile(relation_file)
+    def joinTable(sc: SparkContext, src_vertice: String, src_relation: String, dst: String) {
+        val lines_post = sc.textFile(src_vertice)
+        val lines_relation = sc.textFile(src_relation)
 
         val rows_post = lines_post.map(x => x.split(",").map(ele => ele.trim))
         val rows_relation = lines_relation.map(x => x.split(",").map(ele => ele.trim))
@@ -86,78 +118,77 @@ object SubGraph {
                 info(3) = id.getOrElse("0")
                 info.mkString(",")
         }
-        writeToFile(result, joined_file_folder)
-        merge(joined_file_folder, joined_file_file)
+        writeToFile(result, dst)
+        merge(dst, dst + ".csv")
     }
 
-    def connectedComponents(sc: SparkContext) {
-        val joined_file_file = "file:///Users/zhyueqi/WorkSpace/spark/data/recover.csv"
+    def connectedComponents(sc: SparkContext, src: String, dst: String) {
 
-        val edge_tripl = sc.textFile(joined_file_file).map { x =>
+        // Hash function to assign an Id to each article
+        def nameHash(title: String): VertexId = {
+            title.toLowerCase.replace(" ", "").hashCode.toLong
+        }
+
+        val edge_tripl = sc.textFile(src).map { x =>
             val arr = x.split(",").map(e => e.trim)
-            (arr(1), arr(3), x(5).toLong)
+            ((nameHash(arr(2)), arr(2)), (nameHash(arr(4)), arr(4)), x(5).toLong)
         }
-
-        val empty_removed = edge_tripl.filter(x => x._1 != "0" && x._2 != "0")
-
+        //val empty_removed = edge_tripl.filter(x => x._1 != "0" && x._2 != "0")
         println("connectedComponents")
-        println("edges count : " + empty_removed.count())
+        println("edges count : " + edge_tripl.count())
 
-        val edges = empty_removed.map {
+        val edges = edge_tripl.map {
             case (src, dst, w) =>
-                Edge(src.toLong, dst.toLong, w)
+                Edge(src._1, dst._1, w)
         }
 
-        val g = Graph.fromEdges(edges, "defaultProperty")
+        val vertices = edge_tripl.flatMap {
+            case (src, dst, w) =>
+                List((src._1, src._2), (dst._1, dst._2))
+        }
+
+        println("vertices count:" + vertices.count())
+
+        val g = Graph.fromEdges(edges, "")
 
         val labled_components = ConnectedComponents.run(g)
 
-        val result = extractEachComponentByVertice(labled_components)
+        val result = extractEachComponentByVertice(labled_components, vertices)
 
-        val file = "file:///Users/zhyueqi/WorkSpace/spark/data/final"
-        //FileUtil.fullyDelete(new File(file))
+        val sorted = result.sortBy(x => x._2._2.size)
 
-        def countNum(len: Long): Long = {
-            if (len == 1)
-                2
-            else
-                len * 2 - 1
-        }
-
-        val sorted = result.sortBy {
-            x =>
-                countNum(x._2._2.size)
-
-        }
         val arrayMap = sorted.map {
             case (label, (cw, vw)) =>
-                val arr = Array.fill[String](3 + vw.size)("")
-                arr(0) = label.toString
+                val arr = Array.fill[String](2 + vw.size)("")
+                arr(0) = vw.size.toString
                 arr(1) = cw.toString
-                arr(2) = countNum(vw.size).toString
-                var i = 3
+                var i = 2
                 for (v <- vw) {
-                    arr(i) = v.toString
+                    arr(i) = v._1 + ":" + v._2
                     i += 1
                 }
                 arr.mkString(",")
         }
-        arrayMap.saveAsTextFile(file)
-        merge(file, file + ".csv")
+        arrayMap.saveAsTextFile(dst)
+        merge(dst, dst + ".txt")
 
     }
 
-    def extractEachComponentByVertice(labled_components: Graph[Long, Long]) = {
+    def extractEachComponentByVertice(labled_components: Graph[Long, Long], vertices: RDD[(VertexId, String)]) = {
         def sendMsg(ctx: EdgeContext[Long, Long, Long]) = {
             ctx.sendToDst(ctx.attr)
             ctx.sendToSrc(ctx.attr)
         }
 
+        val merged_vertice: RDD[(VertexId, (Long, String))] = labled_components.vertices.leftOuterJoin(vertices).map {
+            case (id, (label, nameOps)) =>
+                (id, (label, nameOps.getOrElse("")))
+        }
         //count each vertices's weight
         val vertices_weight: RDD[(VertexId, Long)] = labled_components.aggregateMessages[Long](sendMsg, _ + _)
-        val vertices_merge = labled_components.vertices.leftOuterJoin(vertices_weight).map {
-            case (id, (label, vw)) =>
-                (label, (id, vw.getOrElse(0L)))
+        val vertices_merge = merged_vertice.leftOuterJoin(vertices_weight).map {
+            case (id, ((label, name), vw)) =>
+                (label, (name, vw.getOrElse(0L)))
         }
 
         val group_vertices = vertices_merge.groupByKey()
@@ -168,6 +199,9 @@ object SubGraph {
 
         val component_weight = group_edges.reduceByKey((a, b) => (a + b))
 
+        //label:component id
+        //cw:total post in component
+        //vw:Iterator[(name,numberOfPost)]
         val result = component_weight.leftOuterJoin(group_vertices).map {
             case (label, (cw, vw)) =>
                 (label, (cw, vw.getOrElse(Iterator.empty)))
