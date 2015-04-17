@@ -45,8 +45,11 @@ object SubGraph {
                 }
             }
             case "4" => {
-                if (args.length >= 3) {
+                if (args.length == 3) {
                     connectedComponents(sc, args(1), args(2))
+                }
+                if (args.length == 4) {
+                    connectedComponents(sc, args(1), args(2), args(3))
                 }
             }
             case _ => {
@@ -55,24 +58,14 @@ object SubGraph {
         }
 
         task(args(0));
-
-        //去除重复项数据
-        //remove_repeating_vertice(sc,pathOfSrc,pathOfDst);
-        // remove_repeating_edges(sc,pathOfSrc,pathOfDst);
-
-        //补充 id
-        //joinTable(sc,pathOfSrc,pathOfDst);
-        //无向图子图
-        //connectedComponents(sc,pathOfSrc,pathOfDst);
     }
 
     def remove_repeating_vertice(sc: SparkContext, src: String, dst: String) {
 
         val lines = sc.textFile(src)
         val lineTrips = lines.map(line => line.split(",").map(elem => elem.trim))
-        // lineTrips.persist()
         val combined = combine_a(lineTrips);
-        println(combined.count());
+        // println(combined.count());
         writeToFile(combined, dst);
         merge(dst, dst + ".csv")
     }
@@ -80,9 +73,8 @@ object SubGraph {
     def remove_repeating_edges(sc: SparkContext, src: String, dst: String) {
         val lines = sc.textFile(src)
         val lineTrips = lines.map(line => line.split(",").map(elem => elem.trim))
-        // lineTrips.persist()
         val combined = combine_b(lineTrips);
-        println(combined.count());
+        // println(combined.count());
         writeToFile(combined, dst);
         merge(dst, dst + ".csv")
     }
@@ -96,77 +88,108 @@ object SubGraph {
 
         val pair_post = rows_post.map(x => (x(1), x(0))); //名字，id
 
-        val pair_relation = rows_relation.map(x => (x(0), x)) //MD5,全信息
+        val final_l = mergeLeft(rows_relation, pair_post)
 
-        val filter_relation_l = rows_relation.filter(x => x(1) == "0") //过滤出head 0
-        val pair_relation_l = filter_relation_l.map(x => (x(2), x(0))) //名字，MD5
-        val fill_result_l = pair_relation_l.leftOuterJoin(pair_post).map {
-            case (key, (a, b)) => (a, b.getOrElse("0")) //md5,id
-        }
-        val final_l = pair_relation.leftOuterJoin(fill_result_l).map {
-            case (md5, (info, id)) =>
-                info(1) = id.getOrElse("0")
-                (md5, info)
-        }
-        val filter_relation_r = rows_relation.filter(x => x(3) == "0") //过滤出 tail 0
-        val pair_relation_r = filter_relation_r.map(x => (x(4), x(0))) //名字，MD5
-        val fill_result_r = pair_relation_r.leftOuterJoin(pair_post).map {
-            case (key, (a, b)) => (a, b.getOrElse("0")) //md5,id
-        }
-        val result = final_l.leftOuterJoin(fill_result_r).map {
-            case (md5, (info, id)) =>
-                info(3) = id.getOrElse("0")
-                info.mkString(",")
-        }
+        val result = mergeRight(final_l, rows_relation, pair_post)
         writeToFile(result, dst)
         merge(dst, dst + ".csv")
     }
 
-    def connectedComponents(sc: SparkContext, src: String, dst: String) {
+    def mergeLeft(rows_relation: RDD[Array[String]], pair_post: RDD[(String, String)]): RDD[(String, Array[String])] = {
+        val pair_relation = rows_relation.map(x => (x(0), x)) //MD5,全信息
+        val filter_relation_l = rows_relation.filter(x => x(1) == "0") //过滤出head 0
 
-        // Hash function to assign an Id to each article
-        def nameHash(title: String): VertexId = {
-            title.toLowerCase.replace(" ", "").hashCode.toLong
+        if (filter_relation_l.count() != 0) {
+            val pair_relation_l = filter_relation_l.map(x => (x(2), x(0))) //名字，MD5
+
+            val fill_result_l = pair_relation_l.leftOuterJoin(pair_post).map {
+                case (key, (a, b)) => (a, b.getOrElse("0")) //md5,id
+            }
+            pair_relation.leftOuterJoin(fill_result_l).map {
+                case (md5, (info, id)) =>
+                    info(1) = id.getOrElse("0")
+                    (md5, info)
+            }
+        } else {
+            pair_relation
         }
+    }
+    def mergeRight(arg: RDD[(String, Array[String])], rows_relation: RDD[Array[String]], pair_post: RDD[(String, String)]): RDD[String] = {
+        val filter_relation_r = rows_relation.filter(x => x(3) == "0") //过滤出 tail 0
+        if (filter_relation_r.count() != 0) {
+            val pair_relation_r = filter_relation_r.map(x => (x(4), x(0))) //名字，MD5
+            val fill_result_r = pair_relation_r.leftOuterJoin(pair_post).map {
+                case (key, (a, b)) => (a, b.getOrElse("0")) //md5,id
+            }
+            arg.leftOuterJoin(fill_result_r).map {
+                case (md5, (info, id)) =>
+                    info(3) = id.getOrElse("0")
+                    info.mkString(",")
+            }
+        } else {
+            arg.map(x => x._2.mkString(","))
+        }
+    }
+
+    def connectedComponents(sc: SparkContext, src: String, dst: String, verticeFile: String = "") {
 
         val edge_tripl = sc.textFile(src).map { x =>
             val arr = x.split(",").map(e => e.trim)
             ((nameHash(arr(2)), arr(2)), (nameHash(arr(4)), arr(4)), x(5).toLong)
         }
         //val empty_removed = edge_tripl.filter(x => x._1 != "0" && x._2 != "0")
-        println("connectedComponents")
-        println("edges count : " + edge_tripl.count())
+        // println("connectedComponents")
+        // println("edges count : " + edge_tripl.count())
 
         val edges = edge_tripl.map {
             case (src, dst, w) =>
                 Edge(src._1, dst._1, w)
         }
 
-        val vertices = edge_tripl.flatMap {
-            case (src, dst, w) =>
-                List((src._1, src._2), (dst._1, dst._2))
-        }
-
-        println("vertices count:" + vertices.count())
-
         val g = Graph.fromEdges(edges, "")
 
         val labled_components = ConnectedComponents.run(g)
+        //获取节点属性（名称，发帖数量）//两种模式
+        def vertices_vd(mode: String): RDD[(VertexId, (String, Long))] = mode.length match {
+            case 0 => {
+                val vertices_dirty: RDD[(VertexId, String)] = edge_tripl.flatMap {
+                    case (src, dst, w) =>
+                        List((src._1, src._2), (dst._1, dst._2))
+                }
+                val vertices = vertices_dirty.reduceByKey((a, b) => a);
+                //从边集文件统计发帖数量（无向）
+                val vertices_weight: RDD[(VertexId, Long)] = verticeWeight(labled_components)
+                vertices.leftOuterJoin(vertices_weight).map {
+                    case (id, (name, wOps)) =>
+                        (id, (name, wOps.getOrElse(0L)))
+                }
+            }
+            case _ => {
+                //从定点集文件获取属性
+                val file = sc.textFile(mode)
+                verticeWeightFromFile(file)
+            }
+        }
 
-        val result = extractEachComponentByVertice(labled_components, vertices)
+        val vertices_weight = vertices_vd(verticeFile)
 
+        val result = extractEachComponentByVertice(labled_components, vertices_weight)
+        //排序
         val sorted = result.sortBy(x => x._2._2.size)
-
+        //格式化输出
         val arrayMap = sorted.map {
             case (label, (cw, vw)) =>
                 val arr = Array.fill[String](2 + vw.size)("")
                 arr(0) = vw.size.toString
-                arr(1) = cw.toString
+                // arr(1) = cw.toString
                 var i = 2
+                var total = 0L
                 for (v <- vw) {
                     arr(i) = v._1 + ":" + v._2
                     i += 1
+                    total += v._2
                 }
+                arr(1) = total.toString
                 arr.mkString(",")
         }
         arrayMap.saveAsTextFile(dst)
@@ -174,26 +197,23 @@ object SubGraph {
 
     }
 
-    def extractEachComponentByVertice(labled_components: Graph[Long, Long], vertices: RDD[(VertexId, String)]) = {
-        def sendMsg(ctx: EdgeContext[Long, Long, Long]) = {
-            ctx.sendToDst(ctx.attr)
-            ctx.sendToSrc(ctx.attr)
-        }
+    // Hash function to assign an Id to each article
+    def nameHash(title: String): VertexId = {
+        title.toLowerCase.replace(" ", "").hashCode.toLong
+    }
 
-        val merged_vertice: RDD[(VertexId, (Long, String))] = labled_components.vertices.leftOuterJoin(vertices).map {
-            case (id, (label, nameOps)) =>
-                (id, (label, nameOps.getOrElse("")))
+    def extractEachComponentByVertice(labled_components: Graph[Long, Long], vertices: RDD[(VertexId, (String, Long))]) = {
+        // ? 如果找不到对应的点 ---》 异常信息写入日志
+        val merged_vertice = labled_components.vertices.leftOuterJoin(vertices).map {
+            case (id, (label, vdOps)) =>
+                val vd = vdOps.getOrElse(("Not found", 0L))
+                (label, (vd._1, vd._2))
         }
-        //count each vertices's weight
-        val vertices_weight: RDD[(VertexId, Long)] = labled_components.aggregateMessages[Long](sendMsg, _ + _)
-        val vertices_merge = merged_vertice.leftOuterJoin(vertices_weight).map {
-            case (id, ((label, name), vw)) =>
-                (label, (name, vw.getOrElse(0L)))
-        }
-
-        val group_vertices = vertices_merge.groupByKey()
-
-        //labled_components.persist()
+        // val vertices_merge = merged_vertice.leftOuterJoin(vertices_weight).map {
+        //     case (id, ((label, name), vw)) =>
+        //         (label, (name, vw.getOrElse(0L)))
+        // }
+        val group_vertices = merged_vertice.groupByKey()
 
         val group_edges = labled_components.triplets.map(x => (x.srcAttr, x.attr))
 
@@ -204,10 +224,29 @@ object SubGraph {
         //vw:Iterator[(name,numberOfPost)]
         val result = component_weight.leftOuterJoin(group_vertices).map {
             case (label, (cw, vw)) =>
-                (label, (cw, vw.getOrElse(Iterator.empty)))
+                val it = vw.getOrElse(Iterator.empty)
+                (label, (cw, it))
         }
-
         result
+    }
+
+    /**
+     * 统计邻边权值（无向）
+     */
+    def verticeWeight(g: Graph[Long, Long]): RDD[(VertexId, Long)] = {
+        def sendMsg(ctx: EdgeContext[Long, Long, Long]) = {
+            ctx.sendToDst(ctx.attr)
+            ctx.sendToSrc(ctx.attr)
+        }
+        g.aggregateMessages[Long](sendMsg, _ + _)
+    }
+
+    /**
+     * 从节点文件内读取
+     *
+     */
+    def verticeWeightFromFile(file: RDD[String]): RDD[(VertexId, (String, Long))] = {
+        file.map(x => x.split(",").map(e => e.trim)).map(x => (nameHash(x(1)), (x(1), x(2).toLong)))
     }
 
     def extractEachComponentByEdges(labled_components: Graph[Long, Long]) {
@@ -263,8 +302,9 @@ object SubGraph {
      */
     def merge(srcPath: String, dstPath: String): Unit = {
         val hadoopConfig = new Configuration()
-        val hdfs = FileSystem.get(hadoopConfig)
-        FileUtil.copyMerge(hdfs, new Path(srcPath), hdfs, new Path(dstPath), false, hadoopConfig, null)
+        // val hdfs = FileSystem.get(hadoopConfig)
+        val fs = FileSystem.getLocal(hadoopConfig)
+        FileUtil.copyMerge(fs, new Path(srcPath), fs, new Path(dstPath), false, hadoopConfig, null)
     }
 }
 
