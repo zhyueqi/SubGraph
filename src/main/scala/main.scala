@@ -146,17 +146,19 @@ object SubGraph {
                 Edge(src._1, dst._1, w)
         }
 
-        val g = Graph.fromEdges(edges, "")
+        val vertices_dirty: RDD[(VertexId, String)] = edge_tripl.flatMap {
+            case (src, dst, w) =>
+                List((src._1, src._2), (dst._1, dst._2))
+        }
+        val vertices = vertices_dirty.reduceByKey((a, b) => a);
+
+        val g = Graph(vertices, edges, "")
 
         val labled_components = ConnectedComponents.run(g)
         //获取节点属性（名称，发帖数量）//两种模式
         def vertices_vd(mode: String): RDD[(VertexId, (String, Long))] = mode.length match {
             case 0 => {
-                val vertices_dirty: RDD[(VertexId, String)] = edge_tripl.flatMap {
-                    case (src, dst, w) =>
-                        List((src._1, src._2), (dst._1, dst._2))
-                }
-                val vertices = vertices_dirty.reduceByKey((a, b) => a);
+
                 //从边集文件统计发帖数量（无向）
                 val vertices_weight: RDD[(VertexId, Long)] = verticeWeight(labled_components)
                 vertices.leftOuterJoin(vertices_weight).map {
@@ -167,7 +169,11 @@ object SubGraph {
             case _ => {
                 //从定点集文件获取属性
                 val file = sc.textFile(mode)
-                verticeWeightFromFile(file)
+                val vertices_weight = verticeWeightFromFile(file)
+                vertices.leftOuterJoin(vertices_weight).map {
+                    case (id, (name, wOps)) =>
+                        (id, (name, wOps.getOrElse(0L)))
+                }
             }
         }
 
@@ -245,8 +251,8 @@ object SubGraph {
      * 从节点文件内读取
      *
      */
-    def verticeWeightFromFile(file: RDD[String]): RDD[(VertexId, (String, Long))] = {
-        file.map(x => x.split(",").map(e => e.trim)).map(x => (nameHash(x(1)), (x(1), x(2).toLong)))
+    def verticeWeightFromFile(file: RDD[String]): RDD[(VertexId, Long)] = {
+        file.map(x => x.split(",").map(e => e.trim)).map(x => (nameHash(x(1)), x(2).toLong))
     }
 
     def extractEachComponentByEdges(labled_components: Graph[Long, Long]) {
